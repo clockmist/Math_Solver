@@ -1,0 +1,208 @@
+"""
+使用外部强模型（kimi-k2.6）为训练数据生成 CoT 推理链。
+
+用法:
+    export KIMI_API_KEY="sk-kimi-5nadQrXpC5DgFTKUaa6aAYJTOE91bejgV9NF9b2BTXNfDcAxbqgGJY9zIjdpOZAh"
+    export KIMI_MODEL="kimi-k2.6"          # 可选
+    export KIMI_BASE_URL="https://api.kimi.com/coding/v1"  # 可选
+    python generate_cot_data.py
+
+输出:
+    train_cot.json   - 验证通过的 CoT 格式训练数据
+    cot_progress.json - 断点续传进度
+    cot_failed.json   - 失败样本记录
+"""
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime
+
+from openai import OpenAI
+
+# --- Config from env vars ---
+API_KEY = os.getenv("sk-kimi-5nadQrXpC5DgFTKUaa6aAYJTOE91bejgV9NF9b2BTXNfDcAxbqgGJY9zIjdpOZAh", "")
+BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.kimi.com/coding/v1")
+MODEL = os.getenv("KIMI_MODEL", "kimi-k2.6")
+REQUEST_DELAY = float(os.getenv("KIMI_DELAY", "1.0"))
+MAX_RETRIES = 3
+SAVE_INTERVAL = 50
+
+# --- Prompt templates ---
+SYSTEM_PROMPT = (
+    "你是一位经验丰富的小学数学老师。你会收到一道小学数学题和它的正确答案。"
+    "请根据题目和答案，写出完整、清晰的解题过程，确保推理能自然推导出给定的答案。\n"
+    "\n"
+    "输出必须严格按照以下格式：\n"
+    "\n"
+    "已知条件：\n"
+    "[列出题目中的所有已知数值和关系]\n"
+    "\n"
+    "求解目标：\n"
+    "[明确指出需要计算什么]\n"
+    "\n"
+    "计算过程：\n"
+    "[按顺序写出每一步的计算算式和结果，每步一行。算式要完整，如：\n"
+    "75 - 65 = 10（千米）\n"
+    "40 ÷ 10 = 4（小时）\n"
+    "(75 + 65) × 4 = 560（千米）]\n"
+    "\n"
+    "验证：\n"
+    "[将答案代回原题验证是否合理，写出验证算式]\n"
+    "\n"
+    "答案：数字\n"
+    "\n"
+    "重要规则：\n"
+    "1. 不要使用 LaTeX 格式（如 \\(...\\)），用纯文本写算式\n"
+    "2. 最后一行必须严格是「答案：数字」，不要写「所以答案是...」或其他结尾\n"
+    "3. 答案必须是纯数字，不带任何单位（如千米、千克、米）\n"
+    "4. 分数使用 a/b 格式（如 3/4），小数使用标准格式（如 7.5）\n"
+    "5. 题目中的中文数字（一、二、两、三...）要正确识别为阿拉伯数值"
+)
+
+USER_PROMPT_TEMPLATE = "题目：{question}\n\n正确答案：{answer}\n\n请根据以上题目和正确答案，写出详细的解题过程。"
+
+# --- Answer extraction ---
+ANSWER_RE = re.compile(r"答案[：:]\s*([\d]+(?:\.[\d]+)?(?:\/[1-9]\d*)?)")
+
+
+def extract_answer(text: str) -> str | None:
+    m = ANSWER_RE.search(text)
+    if m:
+        return m.group(1)
+    # fallback: last number-like token
+    numbers = re.findall(r"[\d]+(?:\.[\d]+)?(?:\/[1-9]\d*)?", text)
+    if numbers:
+        return numbers[-1]
+    return None
+
+
+# --- API call with retry ---
+def call_kimi(client: OpenAI, question: str, answer: str) -> str | None:
+    user_content = USER_PROMPT_TEMPLATE.format(question=question, answer=answer)
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.3,
+                max_tokens=2048,
+                timeout=120,
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            wait = 2 ** attempt
+            print(f"  [attempt {attempt + 1}/{MAX_RETRIES}] API error: {e}, retrying in {wait}s...")
+            time.sleep(wait)
+    return None
+
+
+# --- Main ---
+def main():
+    if not API_KEY:
+        print("ERROR: KIMI_API_KEY environment variable not set.")
+        print("Usage: export KIMI_API_KEY='your-key' && python generate_cot_data.py")
+        sys.exit(1)
+
+    client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+    print(f"API: {BASE_URL}, Model: {MODEL}")
+
+    with open("train.json", "r", encoding="utf-8") as f:
+        train_data = json.load(f)
+    print(f"Loaded {len(train_data)} training samples.")
+
+    # Resume support
+    progress_path = "cot_progress.json"
+    failed_path = "cot_failed.json"
+    output_path = "train_cot.json"
+
+    processed_ids = set()
+    if os.path.exists(progress_path):
+        with open(progress_path, "r", encoding="utf-8") as f:
+            processed_ids = set(json.load(f))
+        print(f"Resuming: {len(processed_ids)} already processed.")
+
+    results = []  # validated CoT samples
+    failed = []
+    if os.path.exists(failed_path):
+        with open(failed_path, "r", encoding="utf-8") as f:
+            failed = json.load(f)
+
+    total = len(train_data)
+    matched = 0
+    mismatched = 0
+    api_errors = 0
+
+    for i, sample in enumerate(train_data):
+        sid = sample["id"]
+        if sid in processed_ids:
+            continue
+
+        question = sample["question"]
+        label = sample["answer"]
+
+        print(f"[{i + 1}/{total}] id={sid} Q: {question[:60]}...")
+
+        response = call_kimi(client, question, label)
+        if response is None:
+            api_errors += 1
+            failed.append({"id": sid, "question": question, "label": label, "reason": "API error"})
+            processed_ids.add(sid)
+            time.sleep(REQUEST_DELAY)
+            continue
+
+        pred = extract_answer(response)
+        if pred is not None and pred == label:
+            matched += 1
+            results.append({
+                "id": sid,
+                "question": question,
+                "answer": response,  # full CoT reasoning as answer
+                "instruction": (
+                    "你是小学数学解题助手。请按以下步骤解答问题："
+                    "先提取已知条件，明确求解目标，写出详细的计算过程，"
+                    "最后验证答案。最后一行必须是「答案：数字」。"
+                ),
+            })
+        else:
+            mismatched += 1
+            failed.append({
+                "id": sid, "question": question, "label": label,
+                "pred": pred, "reason": "answer mismatch",
+                "model_output": response,
+            })
+
+        processed_ids.add(sid)
+        time.sleep(REQUEST_DELAY)
+
+        # Periodic save
+        if (i + 1) % SAVE_INTERVAL == 0:
+            _save(results, output_path)
+            _save(list(processed_ids), progress_path)
+            _save(failed, failed_path)
+            print(f"  [checkpoint] matched={matched} mismatched={mismatched} errors={api_errors}")
+
+    # Final save
+    _save(results, output_path)
+    _save(list(processed_ids), progress_path)
+    _save(failed, failed_path)
+
+    print(f"\nDone. Total: {total}")
+    print(f"  Matched: {matched} ({matched / total * 100:.1f}%)")
+    print(f"  Mismatched: {mismatched} ({mismatched / total * 100:.1f}%)")
+    print(f"  API errors: {api_errors} ({api_errors / total * 100:.1f}%)")
+    print(f"  Output: {output_path} ({len(results)} samples)")
+    print(f"  Failed log: {failed_path}")
+
+
+def _save(obj, path: str):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+
+
+if __name__ == "__main__":
+    main()
