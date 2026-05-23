@@ -92,23 +92,33 @@ SYSTEM_PROMPT = (
 USER_PROMPT_TEMPLATE = "题目：{question}\n\n正确答案：{answer}\n\n请根据以上题目和正确答案，写出详细的解题过程。"
 
 # --- Answer extraction ---
-ANSWER_RE = re.compile(r"答案[：:]\s*([\d]+(?:\.[\d]+)?(?:\/[1-9]\d*)?)")
+# Matches: 315, 7.5, 4/5, 2_1/5 (mixed fraction), 70%
+ANSWER_RE = re.compile(r"答案[：:]\s*([\d]+(?:_[\d]+)?(?:\.[\d]+)?(?:\/[\d]+)?)\s*%?")
 
 
 def extract_answer(text: str) -> str | None:
     m = ANSWER_RE.search(text)
     if m:
-        return m.group(1)
+        return normalize_answer(m.group(1))
     # fallback: last number-like token
-    numbers = re.findall(r"[\d]+(?:\.[\d]+)?(?:\/[1-9]\d*)?", text)
+    numbers = re.findall(r"[\d]+(?:_[\d]+)?(?:\.[\d]+)?(?:\/[\d]+)?%?", text)
     if numbers:
-        return numbers[-1]
+        return normalize_answer(numbers[-1])
     return None
 
 
+def normalize_answer(answer: str) -> str:
+    """Strip %, whitespace; handle None."""
+    if not answer:
+        return ""
+    return str(answer).strip().rstrip("%")
+
+
 # --- API call with retry ---
-def call_kimi(client: OpenAI, question: str, answer: str) -> str | None:
-    user_content = USER_PROMPT_TEMPLATE.format(question=question, answer=answer)
+def call_llm(client: OpenAI, question: str, answer: str) -> str | None:
+    # Strip % from the answer shown to the model (model outputs pure numbers)
+    clean_answer = normalize_answer(answer)
+    user_content = USER_PROMPT_TEMPLATE.format(question=question, answer=clean_answer)
     for attempt in range(MAX_RETRIES):
         try:
             resp = client.chat.completions.create(
@@ -176,9 +186,15 @@ def main():
         question = sample["question"]
         label = sample["answer"]
 
+        # 跳过标注答案为空的样本
+        if not label or not str(label).strip():
+            print(f"[{i + 1}/{total}] id={sid} SKIP (empty label)")
+            processed_ids.add(sid)
+            continue
+
         print(f"[{i + 1}/{total}] id={sid} Q: {question[:60]}...")
 
-        response = call_kimi(client, question, label)
+        response = call_llm(client, question, str(label))
         if response is None:
             api_errors += 1
             failed.append({"id": sid, "question": question, "label": label, "reason": "API error"})
@@ -187,7 +203,7 @@ def main():
             continue
 
         pred = extract_answer(response)
-        if pred is not None and pred == label:
+        if pred is not None and normalize_answer(pred) == normalize_answer(str(label)):
             matched += 1
             results.append({
                 "id": sid,
