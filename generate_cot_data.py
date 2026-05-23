@@ -2,7 +2,7 @@
 使用外部强模型（kimi-k2.6）为训练数据生成 CoT 推理链。
 
 用法:
-    export KIMI_API_KEY="sk-kimi-5nadQrXpC5DgFTKUaa6aAYJTOE91bejgV9NF9b2BTXNfDcAxbqgGJY9zIjdpOZAh"
+    export KIMI_API_KEY="your-kimi-api-key"
     export KIMI_MODEL="kimi-k2.6"          # 可选
     export KIMI_BASE_URL="https://api.kimi.com/coding/v1"  # 可选
     python generate_cot_data.py
@@ -22,7 +22,7 @@ from datetime import datetime
 from openai import OpenAI
 
 # --- Config from env vars ---
-API_KEY = os.getenv("sk-kimi-5nadQrXpC5DgFTKUaa6aAYJTOE91bejgV9NF9b2BTXNfDcAxbqgGJY9zIjdpOZAh", "")
+API_KEY = os.getenv("KIMI_API_KEY", "")
 BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.kimi.com/coding/v1")
 MODEL = os.getenv("KIMI_MODEL", "kimi-k2.6")
 REQUEST_DELAY = float(os.getenv("KIMI_DELAY", "1.0"))
