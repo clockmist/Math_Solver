@@ -1,11 +1,10 @@
 """
 使用外部强模型（kimi-k2.6）为训练数据生成 CoT 推理链。
 
-用法:
-    export KIMI_API_KEY="your-kimi-api-key"
-    export KIMI_MODEL="kimi-k2.6"          # 可选
-    export KIMI_BASE_URL="https://api.kimi.com/coding/v1"  # 可选
-    python generate_cot_data.py
+用法（三选一）:
+    1. 环境变量:  set KIMI_API_KEY=your-key && python generate_cot_data.py
+    2. 命令行:    python generate_cot_data.py --api-key your-key
+    3. 文件:      创建 kimi_key.txt，第一行写入你的 API key
 
 输出:
     train_cot.json   - 验证通过的 CoT 格式训练数据
@@ -21,11 +20,33 @@ from datetime import datetime
 
 from openai import OpenAI
 
-# --- Config from env vars ---
-API_KEY = os.getenv("KIMI_API_KEY", "")
+# --- Config ---
 BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.kimi.com/coding/v1")
 MODEL = os.getenv("KIMI_MODEL", "kimi-k2.6")
 REQUEST_DELAY = float(os.getenv("KIMI_DELAY", "1.0"))
+
+
+def get_api_key() -> str:
+    """Try to get API key from: 1) env var, 2) CLI arg, 3) kimi_key.txt file."""
+    # 1) Environment variable
+    key = os.getenv("KIMI_API_KEY", "")
+    if key:
+        return key
+
+    # 2) Command-line --api-key
+    for i, arg in enumerate(sys.argv):
+        if arg == "--api-key" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+
+    # 3) kimi_key.txt file
+    key_file = os.path.join(os.path.dirname(__file__), "kimi_key.txt")
+    if os.path.exists(key_file):
+        with open(key_file, "r", encoding="utf-8") as f:
+            key = f.readline().strip()
+            if key:
+                return key
+
+    return ""
 MAX_RETRIES = 3
 SAVE_INTERVAL = 50
 
@@ -103,12 +124,15 @@ def call_kimi(client: OpenAI, question: str, answer: str) -> str | None:
 
 # --- Main ---
 def main():
-    if not API_KEY:
-        print("ERROR: KIMI_API_KEY environment variable not set.")
-        print("Usage: export KIMI_API_KEY='your-key' && python generate_cot_data.py")
+    api_key = get_api_key()
+    if not api_key:
+        print("ERROR: API key not found. Provide it via one of:")
+        print("  1. set KIMI_API_KEY=your-key && python generate_cot_data.py")
+        print("  2. python generate_cot_data.py --api-key your-key")
+        print("  3. Create kimi_key.txt with your API key on the first line")
         sys.exit(1)
 
-    client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+    client = OpenAI(api_key=api_key, base_url=BASE_URL)
     print(f"API: {BASE_URL}, Model: {MODEL}")
 
     with open("train.json", "r", encoding="utf-8") as f:

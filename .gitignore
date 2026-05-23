@@ -25,6 +25,9 @@ Thumbs.db
 # Submission output
 submit.csv
 
+# API key file
+kimi_key.txt
+
 # CoT generation artifacts
 train_cot.json
 cot_progress.json
