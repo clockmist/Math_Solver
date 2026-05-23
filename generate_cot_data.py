@@ -84,41 +84,36 @@ SYSTEM_PROMPT = (
     "重要规则：\n"
     "1. 不要使用 LaTeX 格式（如 \\(...\\)），用纯文本写算式\n"
     "2. 最后一行必须严格是「答案：数字」，不要写「所以答案是...」或其他结尾\n"
-    "3. 答案必须是纯数字，不带任何单位（如千米、千克、米）\n"
-    "4. 分数使用 a/b 格式（如 3/4），小数使用标准格式（如 7.5）\n"
-    "5. 题目中的中文数字（一、二、两、三...）要正确识别为阿拉伯数值"
+    "3. 答案的格式必须和给定的正确答案完全一致：\n"
+    "   - 百分率问题答案必须带百分号，如 答案：70%\n"
+    "   - 带分数使用下划线分隔，如 答案：2_1/5\n"
+    "   - 普通分数使用 a/b 格式，如 答案：3/4\n"
+    "   - 小数使用标准格式，如 答案：7.5\n"
+    "   - 整数直接输出数字，如 答案：315\n"
+    "4. 题目中的中文数字（一、二、两、三...）要正确识别为阿拉伯数值"
 )
 
 USER_PROMPT_TEMPLATE = "题目：{question}\n\n正确答案：{answer}\n\n请根据以上题目和正确答案，写出详细的解题过程。"
 
 # --- Answer extraction ---
 # Matches: 315, 7.5, 4/5, 2_1/5 (mixed fraction), 70%
-ANSWER_RE = re.compile(r"答案[：:]\s*([\d]+(?:_[\d]+)?(?:\.[\d]+)?(?:\/[\d]+)?)\s*%?")
+ANSWER_RE = re.compile(r"答案[：:]\s*([\d]+(?:_[\d]+)?(?:\.[\d]+)?(?:\/[\d]+)?\s*%?)")
 
 
 def extract_answer(text: str) -> str | None:
     m = ANSWER_RE.search(text)
     if m:
-        return normalize_answer(m.group(1))
+        return m.group(1).strip()
     # fallback: last number-like token
     numbers = re.findall(r"[\d]+(?:_[\d]+)?(?:\.[\d]+)?(?:\/[\d]+)?%?", text)
     if numbers:
-        return normalize_answer(numbers[-1])
+        return numbers[-1].strip()
     return None
-
-
-def normalize_answer(answer: str) -> str:
-    """Strip %, whitespace; handle None."""
-    if not answer:
-        return ""
-    return str(answer).strip().rstrip("%")
 
 
 # --- API call with retry ---
 def call_llm(client: OpenAI, question: str, answer: str) -> str | None:
-    # Strip % from the answer shown to the model (model outputs pure numbers)
-    clean_answer = normalize_answer(answer)
-    user_content = USER_PROMPT_TEMPLATE.format(question=question, answer=clean_answer)
+    user_content = USER_PROMPT_TEMPLATE.format(question=question, answer=answer)
     for attempt in range(MAX_RETRIES):
         try:
             resp = client.chat.completions.create(
@@ -203,7 +198,7 @@ def main():
             continue
 
         pred = extract_answer(response)
-        if pred is not None and normalize_answer(pred) == normalize_answer(str(label)):
+        if pred is not None and pred == str(label).strip():
             matched += 1
             results.append({
                 "id": sid,
