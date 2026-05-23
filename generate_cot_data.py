@@ -1,10 +1,14 @@
 """
-使用外部强模型（kimi-k2.6）为训练数据生成 CoT 推理链。
+使用外部强模型（DeepSeek）为训练数据生成 CoT 推理链。
 
 用法（三选一）:
-    1. 环境变量:  set KIMI_API_KEY=your-key && python generate_cot_data.py
+    1. 环境变量:  set LLM_API_KEY=your-key && python generate_cot_data.py
     2. 命令行:    python generate_cot_data.py --api-key your-key
-    3. 文件:      创建 kimi_key.txt，第一行写入你的 API key
+    3. 文件:      创建 deepseek_key.txt，第一行写入你的 API key
+
+也可通过环境变量切换模型:
+    set LLM_BASE_URL=https://api.deepseek.com/v1
+    set LLM_MODEL=deepseek-chat
 
 输出:
     train_cot.json   - 验证通过的 CoT 格式训练数据
@@ -21,32 +25,36 @@ from datetime import datetime
 from openai import OpenAI
 
 # --- Config ---
-BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.kimi.com/coding/v1")
-MODEL = os.getenv("KIMI_MODEL", "kimi-k2.6")
-REQUEST_DELAY = float(os.getenv("KIMI_DELAY", "1.0"))
+BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
+MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
+REQUEST_DELAY = float(os.getenv("LLM_DELAY", "1.0"))
 
 
 def get_api_key() -> str:
-    """Try to get API key from: 1) env var, 2) CLI arg, 3) kimi_key.txt file."""
-    # 1) Environment variable
-    key = os.getenv("KIMI_API_KEY", "")
-    if key:
-        return key
+    """Try to get API key from: 1) env var, 2) CLI arg, 3) key file."""
+    # 1) Environment variable (check both generic and legacy names)
+    for env_name in ("LLM_API_KEY", "KIMI_API_KEY", "DEEPSEEK_API_KEY"):
+        key = os.getenv(env_name, "")
+        if key:
+            return key
 
     # 2) Command-line --api-key
     for i, arg in enumerate(sys.argv):
         if arg == "--api-key" and i + 1 < len(sys.argv):
             return sys.argv[i + 1]
 
-    # 3) kimi_key.txt file
-    key_file = os.path.join(os.path.dirname(__file__), "kimi_key.txt")
-    if os.path.exists(key_file):
-        with open(key_file, "r", encoding="utf-8") as f:
-            key = f.readline().strip()
-            if key:
-                return key
+    # 3) Key files
+    for filename in ("deepseek_key.txt", "kimi_key.txt", "api_key.txt"):
+        key_file = os.path.join(os.path.dirname(__file__), filename)
+        if os.path.exists(key_file):
+            with open(key_file, "r", encoding="utf-8") as f:
+                key = f.readline().strip()
+                if key:
+                    return key
 
     return ""
+
+
 MAX_RETRIES = 3
 SAVE_INTERVAL = 50
 
@@ -127,9 +135,9 @@ def main():
     api_key = get_api_key()
     if not api_key:
         print("ERROR: API key not found. Provide it via one of:")
-        print("  1. set KIMI_API_KEY=your-key && python generate_cot_data.py")
+        print("  1. set LLM_API_KEY=your-key && python generate_cot_data.py")
         print("  2. python generate_cot_data.py --api-key your-key")
-        print("  3. Create kimi_key.txt with your API key on the first line")
+        print("  3. Create deepseek_key.txt with your API key on the first line")
         sys.exit(1)
 
     client = OpenAI(api_key=api_key, base_url=BASE_URL)
