@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Model files (too large)
+Qwen/
+output/
+
+# SwanLab logs
+swanlog/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Submission output
+submit.csv
+
+# Validation results
+cot_val_results_*.json
