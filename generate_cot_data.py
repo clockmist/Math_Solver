@@ -7,8 +7,8 @@
     3. 文件:      创建 deepseek_key.txt，第一行写入你的 API key
 
 也可通过环境变量切换模型:
-    set LLM_BASE_URL=https://api.deepseek.com/v1
-    set LLM_MODEL=deepseek-chat
+    set LLM_BASE_URL=https://api.deepseek.com
+    set LLM_MODEL=deepseek-v4-flash
 
 输出:
     train_cot.json   - 验证通过的 CoT 格式训练数据
@@ -25,8 +25,8 @@ from datetime import datetime
 from openai import OpenAI
 
 # --- Config ---
-BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
-MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
+BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
+MODEL = os.getenv("LLM_MODEL", "deepseek-v4-flash")
 REQUEST_DELAY = float(os.getenv("LLM_DELAY", "1.0"))
 
 
@@ -56,7 +56,6 @@ def get_api_key() -> str:
 
 
 MAX_RETRIES = 3
-SAVE_INTERVAL = 50
 
 # --- Prompt templates ---
 SYSTEM_PROMPT = (
@@ -211,12 +210,11 @@ def main():
         processed_ids.add(sid)
         time.sleep(REQUEST_DELAY)
 
-        # Periodic save
-        if (i + 1) % SAVE_INTERVAL == 0:
-            _save(results, output_path)
-            _save(list(processed_ids), progress_path)
-            _save(failed, failed_path)
-            print(f"  [checkpoint] matched={matched} mismatched={mismatched} errors={api_errors}")
+        # 每条立即写入，方便查看进度
+        _save(results, output_path)
+        _save(list(processed_ids), progress_path)
+        _save(failed, failed_path)
+        print(f"  [status] matched={matched} mismatched={mismatched} errors={api_errors}")
 
     # Final save
     _save(results, output_path)
