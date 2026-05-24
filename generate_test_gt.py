@@ -121,7 +121,12 @@ def main():
         with open(output_path, "r", encoding="utf-8") as f:
             results = json.load(f)
         processed_ids = {r["id"] for r in results}
-        print(f"Resuming: {len(results)} already processed.")
+    if os.path.exists(no_answer_path):
+        with open(no_answer_path, "r", encoding="utf-8") as f:
+            no_answers = json.load(f)
+        processed_ids |= {r["id"] for r in no_answers}
+    if processed_ids:
+        print(f"Resuming: {len(processed_ids)} already processed.")
 
     for i, sample in enumerate(test_data):
         sid = sample["id"]
