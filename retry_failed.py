@@ -15,7 +15,7 @@ from openai import OpenAI
 
 # --- Config ---
 BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
-MODEL = os.getenv("LLM_MODEL", "deepseek-v4-flash")
+MODEL = os.getenv("LLM_MODEL", "deepseek-v4-pro")
 REQUEST_DELAY = float(os.getenv("LLM_DELAY", "1.0"))
 MAX_RETRIES = 3
 
@@ -124,8 +124,8 @@ def main():
 
     print(f"Loaded {len(train_cot)} train samples, {len(failed)} failed samples.")
 
-    recovered = []
-    still_failed = []
+    # 保留所有失败项，成功一条移除一条，中断不丢数据
+    still_failed = list(failed)
 
     for i, item in enumerate(failed):
         sid = item["id"]
@@ -137,13 +137,14 @@ def main():
         response = call_llm(client, question, label)
         if response is None:
             print(f"  -> API error, keeping in failed.")
-            still_failed.append(item)
             time.sleep(REQUEST_DELAY)
+            # still_failed 不变，保留原条目
+            _save_all(train_cot, train_cot_path, still_failed, failed_path)
             continue
 
         pred = extract_answer(response)
         if pred is not None and pred == label:
-            recovered.append({
+            train_cot.append({
                 "id": sid,
                 "question": question,
                 "answer": response,
@@ -153,28 +154,30 @@ def main():
                     "最后验证答案。最后一行必须是「答案：数字」。"
                 ),
             })
+            # 从 still_failed 中移除成功项
+            still_failed = [x for x in still_failed if x["id"] != sid]
             print(f"  -> RECOVERED! answer={pred}")
         else:
-            item["retry_pred"] = pred
-            item["retry_output"] = response
-            still_failed.append(item)
+            # 更新失败记录但保留
+            for x in still_failed:
+                if x["id"] == sid:
+                    x["retry_pred"] = pred
+                    x["retry_output"] = response
+                    break
             print(f"  -> still mismatch. pred={pred} label={label}")
 
         time.sleep(REQUEST_DELAY)
+        _save_all(train_cot, train_cot_path, still_failed, failed_path)
 
-        # Save after every sample
-        if recovered:
-            train_cot.extend(recovered)
-            recovered.clear()
-        with open(train_cot_path, "w", encoding="utf-8") as f:
-            json.dump(train_cot, f, ensure_ascii=False, indent=2)
-        with open(failed_path, "w", encoding="utf-8") as f:
-            json.dump(still_failed, f, ensure_ascii=False, indent=2)
-
-    with open(train_cot_path, "r", encoding="utf-8") as f:
-        final_train_cot = json.load(f)
-    print(f"\nDone. Recovered: {len(final_train_cot) - len(train_cot) + len(recovered)}")
+    print(f"\nDone. Recovered to train: {len(train_cot)} total")
     print(f"Still failed: {len(still_failed)}")
+
+
+def _save_all(train_cot, train_path, failed, failed_path):
+    with open(train_path, "w", encoding="utf-8") as f:
+        json.dump(train_cot, f, ensure_ascii=False, indent=2)
+    with open(failed_path, "w", encoding="utf-8") as f:
+        json.dump(failed, f, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
