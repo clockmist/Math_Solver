@@ -30,10 +30,9 @@ kimi_key.txt
 deepseek_key.txt
 api_key.txt
 
-# CoT generation artifacts
-train_cot.json
-cot_progress.json
-cot_failed.json
 
 # Validation results
 cot_val_results_*.json
+
+test_gt.json
+test_gt_no_answer.json
