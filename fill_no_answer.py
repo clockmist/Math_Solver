@@ -37,8 +37,8 @@ def get_api_key() -> str:
 
 
 SYSTEM_PROMPT = (
-    "你是一个计算器。请直接输出数学题的答案。\n"
-    "规则：只输出答案数字，不要任何解释。分数用 a/b，带分数用 a_b/c，百分数带%。"
+    "你是一个计算器。请最后直接输出正确的数学题的答案。\n"
+    "规则：保证最后只输出答案数字，格式为 答案: xxx。分数用 a/b，带分数用 a_b/c，百分数带%。"
 )
 
 
@@ -68,10 +68,10 @@ def call_llm(client: OpenAI, question: str) -> str | None:
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"{question}\n请直接输出答案："},
+                    {"role": "user", "content": f"{question}\n请解答并最终输出答案:"},
                 ],
                 temperature=0.1,
-                max_tokens=128,
+                max_tokens=10240,
                 timeout=60,
             )
             return resp.choices[0].message.content
@@ -102,7 +102,8 @@ def main():
     print(f"Loaded {len(no_answers)} no-answer questions, {len(test_gt)} answered.")
 
     recovered = 0
-    still_no_answer = []
+    # 保留所有未成功条目，成功一条移除一条，中断不丢数据
+    still_no_answer = list(no_answers)
 
     for i, item in enumerate(no_answers):
         sid = item["id"]
@@ -112,8 +113,8 @@ def main():
         response = call_llm(client, question)
         if response is None:
             print(f"  -> API error, keeping in no-answer.")
-            still_no_answer.append(item)
             time.sleep(REQUEST_DELAY)
+            _save_all(test_gt, test_gt_path, still_no_answer, no_answer_path)
             continue
 
         answer = extract_answer(response)
@@ -123,22 +124,28 @@ def main():
                 "question": question,
                 "answer": answer,
             })
+            # 从 still_no_answer 中移除成功项
+            still_no_answer = [x for x in still_no_answer if x["id"] != sid]
             recovered += 1
             print(f"  -> answer={answer}")
         else:
-            item["raw_response"] = response
-            still_no_answer.append(item)
+            for x in still_no_answer:
+                if x["id"] == sid:
+                    x["raw_response"] = response
+                    break
             print(f"  -> empty/unparsable. raw={response[:60]}")
 
         time.sleep(REQUEST_DELAY)
-
-        # Save after every sample
-        with open(test_gt_path, "w", encoding="utf-8") as f:
-            json.dump(test_gt, f, ensure_ascii=False, indent=2)
-        with open(no_answer_path, "w", encoding="utf-8") as f:
-            json.dump(still_no_answer, f, ensure_ascii=False, indent=2)
+        _save_all(test_gt, test_gt_path, still_no_answer, no_answer_path)
 
     print(f"\nDone. Recovered: {recovered}, Still no answer: {len(still_no_answer)}")
+
+
+def _save_all(test_gt, test_path, no_answer, no_answer_path):
+    with open(test_path, "w", encoding="utf-8") as f:
+        json.dump(test_gt, f, ensure_ascii=False, indent=2)
+    with open(no_answer_path, "w", encoding="utf-8") as f:
+        json.dump(no_answer, f, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
