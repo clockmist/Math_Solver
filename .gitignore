@@ -36,3 +36,9 @@ cot_val_results_*.json
 
 test_gt.json
 test_gt_no_answer.json
+
+.lock
+*.png
+cot_val_errors*.json
+small_val.json
+
