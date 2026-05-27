@@ -27,3 +27,5 @@ submit.csv
 
 # Validation results
 cot_val_results_*.json
+
+deepseek_key.txt
