@@ -5,3 +5,5 @@ modelscope>=1.14.0
 swanlab>=0.3.0
 tqdm>=4.66.0
 openai>=1.0.0
+datasets>=2.14.0
+trl>=0.11.0
