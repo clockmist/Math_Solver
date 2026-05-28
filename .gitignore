@@ -40,9 +40,12 @@ test_gt_no_answer.json
 .lock
 *.png
 cot_val_errors*.json
-small_val.json
+# small_val.json
 
 wandb/
 qwen_dpo_output*/
+qwen_dpo_merged_final/
+qwen_sft_full/
+sft_full_val_errors.json
 
 
