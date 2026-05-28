@@ -42,3 +42,5 @@ test_gt_no_answer.json
 cot_val_errors*.json
 small_val.json
 
+qwen_dpo_output*/
+wandb/

@@ -9,9 +9,9 @@ from peft import PeftModel
 
 # ==================== 配置参数 ====================
 BASE_MODEL_PATH = "./Qwen/Qwen2.5-0.5B-Instruct/"
-LORA_PATH = "./output/Qwen_CoT/checkpoint-7325"   # 训练好的 checkpoint 路径
+LORA_PATH = "./output/Qwen_CoT_v2/checkpoint-7325"   # 训练好的 checkpoint 路径
 TEST_JSON_PATH = "test.json"                      # 测试集路径（需包含 id 和 question）
-OUTPUT_CSV_PATH = "test_predictions.csv"           # 输出 CSV 文件路径
+OUTPUT_CSV_PATH = "test_predictions_v2.csv"           # 输出 CSV 文件路径
 SAVE_INTERVAL = 10                                 # 每推理 N 条就写入一次文件
 # ==================================================
 
