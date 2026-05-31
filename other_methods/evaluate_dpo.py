@@ -10,7 +10,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # ==================== 配置参数 ====================
-MODEL_PATH = "./qwen_dpo_merged_final"               # 合并后的完整模型路径
+MODEL_PATH = "./qwen_grpo_checkpoints/checkpoints-step-5400"               # 合并后的完整模型路径
 VAL_JSON_PATH = "small_val.json"             # 验证集路径
 ERROR_OUTPUT_PATH = "sft_full_val_errors.json"
 PRINT_INTERVAL = 10

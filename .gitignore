@@ -49,3 +49,9 @@ qwen_sft_full/
 sft_full_val_errors.json
 
 
+qwen_grpo_checkpoints/
+GRPO_README.md
+grpo_step5400_errors.json
+
+
+
