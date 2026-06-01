@@ -32,14 +32,14 @@ set_seed(42)
 
 # 路径配置
 BASE_MODEL_PATH = "./qwen_sft_full/"  # 已合并SFT LoRA的完整模型
-DPO_DATA_PATH = "./dpo_data.json"
+DPO_DATA_PATH = "./dpo_data_v2_500.json"  # v2最小改动数据(500条); 全量见 dpo_data_v2.json; v1见 dpo_data.json
 OUTPUT_DIR = "./qwen_dpo_output_enhanced"
 MERGED_MODEL_DIR = "./qwen_dpo_merged_final"
 
 # DPO关键超参数
 BETA = 0.3
 LEARNING_RATE = 5e-6
-NUM_EPOCHS = 2
+NUM_EPOCHS = 1
 BATCH_SIZE = 1
 GRAD_ACCUMULATION = 4
 LORA_R = 16
@@ -335,7 +335,6 @@ def create_dpo_trainer(model, ref_model, tokenizer, dataset, raw_dataset):
         warmup_ratio=0.1,
         beta=BETA,
         max_length=MAX_LENGTH,
-        max_prompt_length=MAX_PROMPT_LENGTH,
         logging_steps=LOG_EVERY_N_STEPS,
         save_steps=SAVE_EVERY_N_STEPS,
         save_total_limit=3,

@@ -1,0 +1,9 @@
+{
+  "total_input": 11717,
+  "generated": 11250,
+  "skipped_no_calc": 47,
+  "skipped_failed": 420,
+  "strategy_counts": {
+    "wrong_result": 11250
+  }
+}
