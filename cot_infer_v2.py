@@ -187,13 +187,13 @@ def main():
         csv_rows.append((qid, "0"))
 
     # 保存完整模型输出到 JSON 文件
-    out_json = "cot_v2_model_outputs.json"
+    out_json = "cot_model_outputs.json"
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(outputs, f, ensure_ascii=False, indent=2)
     print(f"\nModel outputs saved to {out_json}")
 
     # 按照 submit.csv 格式保存 CSV
-    out_csv = "submit_v2.csv"
+    out_csv = "submit_cot.csv"
     with open(out_csv, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
         for qid, answer in csv_rows:
