@@ -12,7 +12,7 @@ from peft import PeftModel
 
 # ==================== 配置 ====================
 BASE_MODEL_PATH = "./qwen_sft_full/"                          # 基座模型
-CHECKPOINT_PATH = "./qwen_grpo_checkpoints/checkpoint-step-5400"  # GRPO LoRA 检查点
+CHECKPOINT_PATH = "./qwen_grpo_checkpoints/checkpoint-step-400"   # 最新快速训练检查点
 VAL_PATH = "small_val.json"                                   # 验证集
 ERROR_OUTPUT = "grpo_step5400_errors.json"                    # 错误样本输出
 MAX_NEW_TOKENS = 256
@@ -96,6 +96,7 @@ def main():
                 max_new_tokens=MAX_NEW_TOKENS,
                 do_sample=False,
                 temperature=1.0,
+                repetition_penalty=1.1,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
             )

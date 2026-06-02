@@ -36,6 +36,7 @@ TRAIN_DATA_PATH = "./train.json"
 OUTPUT_DIR = "./qwen_grpo_output"
 MERGED_MODEL_DIR = "./qwen_grpo_merged_final"
 CHECKPOINT_DIR = "./qwen_grpo_checkpoints"
+BEST_CHECKPOINT_DIR = "./qwen_grpo_best"   # 验证集准确率最高的检查点
 
 # GRPO关键超参数
 LEARNING_RATE = 5e-6
@@ -52,7 +53,7 @@ TOP_K = 50
 # PPO参数
 PPO_EPOCHS = 2                 # 每个mini-batch上做几轮PPO更新（核心！）
 EPSILON = 0.2                  # PPO clipping范围
-BETA_KL = 0.01                 # KL惩罚系数（per-token）
+BETA_KL = 0.05                 # KL惩罚系数（增大防止重复退化）
 
 # LoRA参数
 LORA_R = 16
@@ -65,8 +66,10 @@ SYSTEM_MESSAGE = "你是小学数学解题助手。请按以下步骤解答问�
 # 监控配置
 LOG_EVERY_N_STEPS = 20
 SAVE_EVERY_N_STEPS = 200
+EVAL_EVERY_N_STEPS = 200        # 每隔多少步在验证集上评估
+VAL_DATA_PATH = "small_val.json"  # 验证集路径
 KEEP_LAST_N_CHECKPOINTS = 2
-RESUME_FROM_CHECKPOINT = "./qwen_grpo_checkpoints/checkpoint-step-5400"
+RESUME_FROM_CHECKPOINT = None   # ← 从头训
 
 # =============================================================================
 # 第二部分：答案提取与奖励函数（同原版）
@@ -169,7 +172,27 @@ def compute_mixed_reward(generated_text, correct_answer, tolerance=1e-6):
     elif text_len > 1000:   len_bonus = -0.05
     else:                   len_bonus = 0.0
 
-    total = correctness + format_reward + len_bonus
+    # ---- 重复惩罚：检测退化重复（如 "求求求..." 或反复重复同一句话） ----
+    rep_penalty = 0.0
+    # 连续字符重复检测（如 "求求求求求..."）
+    if len(generated_text) > 20:
+        max_char_run = max(len(m.group()) for m in re.finditer(r'(.)\1{4,}', generated_text)) if re.search(r'(.)\1{4,}', generated_text) else 0
+        if max_char_run > 10:
+            rep_penalty = -0.5
+        elif max_char_run > 6:
+            rep_penalty = -0.2
+    # n-gram 重复检测（同一段话反复出现）
+    if rep_penalty == 0.0 and len(generated_text) > 50:
+        words = generated_text.split()
+        if len(words) > 10:
+            mid = len(words) // 2
+            front = ' '.join(words[:mid])
+            back = ' '.join(words[mid:])
+            # 如果后半段几乎等于前半段 → 严重重复
+            if front[:30] == back[:30] or (len(front) > 60 and front[:60] in back):
+                rep_penalty = -0.3
+
+    total = correctness + format_reward + len_bonus + rep_penalty
     return max(0.0, min(1.0, total)), extracted
 
 
@@ -274,6 +297,8 @@ def generate_batch(model, tokenizer, prompt_ids, num_generations,
         top_p=top_p,
         top_k=top_k,
         do_sample=True,
+        repetition_penalty=1.1,           # 防止训练中产生重复退化
+        no_repeat_ngram_size=3,           # 禁止 3-gram 重复
         pad_token_id=tokenizer.pad_token_id,
         eos_token_id=tokenizer.eos_token_id,
         return_dict_in_generate=True,
@@ -425,7 +450,61 @@ def load_checkpoint(model, optimizer, checkpoint_path):
 
 
 # =============================================================================
-# 第八部分：训练循环
+# 第八部分：周期评估
+# =============================================================================
+
+def evaluate_on_val(base_model_path, checkpoint_path, val_path, system_message):
+    """加载检查点并在验证集上评估准确率"""
+    print(f"\n[评估] 正在评估 {os.path.basename(checkpoint_path)} ...")
+    try:
+        with open(val_path, "r", encoding="utf-8") as f:
+            val_data = json.load(f)
+    except Exception:
+        print("[评估] 验证集加载失败，跳过")
+        return None
+
+    # 加载模型
+    val_tokenizer = AutoTokenizer.from_pretrained(
+        base_model_path, trust_remote_code=True, fix_mistral_regex=True)
+    if val_tokenizer.pad_token is None:
+        val_tokenizer.pad_token = val_tokenizer.eos_token
+    val_tokenizer.padding_side = "left"
+
+    val_base = AutoModelForCausalLM.from_pretrained(
+        base_model_path, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+    val_model = PeftModel.from_pretrained(val_base, checkpoint_path)
+    val_model.eval()
+
+    correct = 0
+    for item in tqdm(val_data, desc="  评估中", leave=False):
+        q, a = item["question"], str(item["answer"]).strip()
+        msgs = [{"role": "system", "content": system_message},
+                {"role": "user", "content": q}]
+        prompt = val_tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        inp = val_tokenizer(prompt, return_tensors="pt").to(val_model.device)
+        with torch.no_grad():
+            out = val_model.generate(**inp, max_new_tokens=256, do_sample=False,
+                                     temperature=1.0, repetition_penalty=1.1,
+                                     pad_token_id=val_tokenizer.pad_token_id,
+                                     eos_token_id=val_tokenizer.eos_token_id)
+        gen = out[0][inp.input_ids.shape[1]:]
+        text = val_tokenizer.decode(gen, skip_special_tokens=True).strip()
+        m = re.search(r"答案[：:]\s*(-?[\d\./]+)", text)
+        pred = m.group(1) if m else (re.findall(r"-?\d+(?:\.\d+)?(?:/\d+)?", text) or [""])[-1]
+        if pred == a:
+            correct += 1
+
+    acc = correct / len(val_data) * 100
+    print(f"[评估] 准确率: {correct}/{len(val_data)} = {acc:.2f}%")
+
+    # 释放评估模型显存
+    del val_model, val_base, val_tokenizer
+    torch.cuda.empty_cache()
+    return acc
+
+
+# =============================================================================
+# 第九部分：训练循环
 # =============================================================================
 
 def train_grpo(model, ref_model, tokenizer, prepared_data, output_dir, resume_path=None):
@@ -452,6 +531,7 @@ def train_grpo(model, ref_model, tokenizer, prepared_data, output_dir, resume_pa
     print(f"  Max new tokens: {MAX_NEW_TOKENS}")
     print(f"{'='*60}\n")
 
+    best_val_acc = -1.0  # 追踪最佳验证准确率
     skip_count = 0
     running_reward_sum = 0.0
     running_reward_count = 0
@@ -599,7 +679,21 @@ def train_grpo(model, ref_model, tokenizer, prepared_data, output_dir, resume_pa
                         pbar.write(f"{'='*60}")
 
                     if global_step % SAVE_EVERY_N_STEPS == 0:
+                        ckpt_path = os.path.join(CHECKPOINT_DIR, f"checkpoint-step-{global_step}")
                         save_checkpoint(model, optimizer, epoch, global_step, step_stats, CHECKPOINT_DIR)
+                        # 周期评估
+                        if os.path.exists(os.path.join(ckpt_path, "adapter_config.json")):
+                            val_acc = evaluate_on_val(BASE_MODEL_PATH, ckpt_path,
+                                                      VAL_DATA_PATH, SYSTEM_MESSAGE)
+                            if val_acc is not None:
+                                step_stats["val_acc"].append((global_step, val_acc))
+                                # 保留最佳检查点
+                                if val_acc > best_val_acc:
+                                    best_val_acc = val_acc
+                                    if os.path.exists(BEST_CHECKPOINT_DIR):
+                                        shutil.rmtree(BEST_CHECKPOINT_DIR)
+                                    shutil.copytree(ckpt_path, BEST_CHECKPOINT_DIR)
+                                    print(f"[最佳] ★ 新最佳准确率: {best_val_acc:.2f}%，已保存到 {BEST_CHECKPOINT_DIR}")
 
             # 更新进度条
             pbar.update(len(batch_data))
@@ -610,6 +704,8 @@ def train_grpo(model, ref_model, tokenizer, prepared_data, output_dir, resume_pa
                 postfix["reward"] = f"{running_reward_sum/running_reward_count:.2f}"
             if running_correct_total > 0:
                 postfix["acc"] = f"{running_correct_sum/running_correct_total*100:.0f}%"
+            if step_stats.get("val_acc"):
+                postfix["val"] = f"{step_stats['val_acc'][-1][1]:.1f}%"
             if skip_count > 0:
                 postfix["skip"] = str(skip_count)
             pbar.set_postfix(postfix, refresh=True)
@@ -618,6 +714,10 @@ def train_grpo(model, ref_model, tokenizer, prepared_data, output_dir, resume_pa
         print(f"Epoch {epoch+1}/{NUM_EPOCHS} 完成 | 跳过: {skip_count}")
 
     print(f"\n[训练结束] 跳过样本: {skip_count}")
+    if step_stats.get("val_acc"):
+        vals = step_stats["val_acc"]
+        print(f"[训练结束] 验证准确率历史: {', '.join(f'Step{s}={a:.1f}%' for s, a in vals)}")
+        print(f"[训练结束] 最佳验证准确率: {best_val_acc:.2f}%，已保存到 {BEST_CHECKPOINT_DIR}")
     return step_stats
 
 
